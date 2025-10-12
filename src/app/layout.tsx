@@ -7,7 +7,7 @@ import Header from "@/components/Header";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "DocuAgent",
+  title: "DeepInshAura",
   description: "AI-powered document analysis system",
 };
 
