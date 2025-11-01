@@ -139,8 +139,12 @@ export const riskApi = {
    * Get all risk reports
    */
   getAllRiskReports: async (): Promise<RiskReport[]> => {
-    return apiFetch<RiskReport[]>('/risks/');
-  },
+  const res = await fetch("/api/reports");
+  const data = await res.json();
+  if (!data.success) throw new Error("Failed to fetch reports");
+  return data.reports;
+},
+
 
   /**
    * Get risk report by ID

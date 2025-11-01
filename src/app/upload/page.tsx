@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { documentApi } from '@/lib/api';
 
 export default function UploadPage() {
   const router = useRouter();
@@ -10,14 +9,23 @@ export default function UploadPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState<any>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
     setErrorMessage('');
+    setResult(null);
     
     if (selectedFile) {
       // Check file type
-      const validTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv'];
+      const validTypes = [
+        'application/pdf', 
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+        'text/plain', 
+        'application/vnd.ms-excel', 
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 
+        'text/csv'
+      ];
       
       if (!validTypes.includes(selectedFile.type)) {
         setErrorMessage('Invalid file type. Please upload PDF, DOCX, TXT, CSV, or Excel files.');
@@ -44,17 +52,38 @@ export default function UploadPage() {
     
     setIsUploading(true);
     setProgress(10);
+    setErrorMessage('');
     
     try {
       setProgress(30);
       
-      // Upload using our API client
-      const result = await documentApi.uploadDocument(file);
+      // Create FormData
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      setProgress(50);
+      
+      // Call our API route
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      setProgress(70);
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Upload failed');
+      }
       
       setProgress(100);
+      setResult(data);
       
-      // Navigate to the document view page
-      router.push(`/documents/${result.data.id}`);
+      // Redirect to documents after 2 seconds
+      setTimeout(() => {
+        router.push('/documents');
+      }, 2000);
       
     } catch (error: any) {
       console.error('Upload error:', error);
@@ -104,6 +133,9 @@ export default function UploadPage() {
                   {file && (
                     <div className="mt-4 text-sm text-gray-900">
                       Selected: <span className="font-medium">{file.name}</span>
+                      <span className="ml-2 text-xs text-gray-500">
+                        ({(file.size / 1024).toFixed(2)} KB)
+                      </span>
                     </div>
                   )}
                 </div>
@@ -121,18 +153,42 @@ export default function UploadPage() {
           </div>
 
           {errorMessage && (
-            <div className="p-4 text-sm text-red-800 rounded-lg bg-red-50">
-              {errorMessage}
+            <div className="p-4 text-sm text-red-800 rounded-lg bg-red-50 border border-red-200">
+              <p className="font-medium">Error:</p>
+              <p>{errorMessage}</p>
+            </div>
+          )}
+
+          {result && (
+            <div className="p-4 text-sm bg-green-50 rounded-lg border border-green-200">
+              <p className="font-medium text-green-800 mb-2">✅ Upload Successful!</p>
+              <p className="text-green-700 mb-2">Document analyzed successfully</p>
+              <div className="mt-2">
+                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                  result.riskLevel === 'HIGH' ? 'bg-red-100 text-red-800' :
+                  result.riskLevel === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-green-100 text-green-800'
+                }`}>
+                  Risk Level: {result.riskLevel}
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 mt-2">Redirecting to documents page...</p>
             </div>
           )}
 
           {isUploading && (
-            <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div
-                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-in-out"
-                style={{ width: `${progress}%` }}
-              ></div>
-              <p className="text-sm text-gray-500 mt-2">Processing document...</p>
+            <div>
+              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-in-out"
+                  style={{ width: `${progress}%` }}
+                ></div>
+              </div>
+              <p className="text-sm text-gray-500 mt-2 text-center">
+                {progress < 50 ? 'Uploading document...' : 
+                 progress < 80 ? 'Analyzing with AI...' : 
+                 'Finalizing...'}
+              </p>
             </div>
           )}
 
@@ -140,9 +196,9 @@ export default function UploadPage() {
             <button
               type="submit"
               disabled={isUploading || !file}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition"
             >
-              {isUploading ? 'Uploading...' : 'Upload Document'}
+              {isUploading ? 'Processing...' : 'Upload & Analyze Document'}
             </button>
           </div>
         </form>
@@ -151,11 +207,12 @@ export default function UploadPage() {
       <div className="mt-6 bg-blue-50 p-4 rounded-lg border border-blue-100">
         <h2 className="text-lg font-semibold text-blue-800">What happens when you upload?</h2>
         <ul className="mt-2 text-sm text-blue-700 list-disc list-inside space-y-1">
-          <li>The document is securely uploaded to our servers</li>
-          <li>Our AI analyzes the document content</li>
-          <li>Metadata is extracted and risk assessment is performed</li>
-          <li>A summary is generated for quick review</li>
-          <li>Results are stored for future reference</li>
+          <li>Document securely uploaded to Firebase Storage</li>
+          <li>AI analyzes content for legal & compliance risks</li>
+          <li>Metadata extracted automatically</li>
+          <li>Risk assessment performed (HIGH/MEDIUM/LOW)</li>
+          <li>Summary generated for quick review</li>
+          <li>Results saved to database</li>
         </ul>
       </div>
     </div>

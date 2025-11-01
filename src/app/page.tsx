@@ -1,14 +1,75 @@
+'use client';
+
 import Link from "next/link";
+import { useEffect, useState } from 'react';
+import { db } from '@/lib/firebase';
+import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 
 export default function Home() {
+  const [stats, setStats] = useState({
+    totalDocs: 0,
+    riskFlags: 0,
+    avgProcessingTime: '0s'
+  });
+  const [recentDocs, setRecentDocs] = useState<any[]>([]);
+  const [recentRisks, setRecentRisks] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const loadDashboardData = async () => {
+    try {
+      // For now, just use sample data
+      // Later we'll fetch from Firestore when documents are uploaded
+      setRecentDocs(sampleDocs);
+      setRecentRisks(sampleRisks);
+      setStats({
+        totalDocs: sampleDocs.length,
+        riskFlags: sampleRisks.filter((r: any) => r.severity === 'High').length,
+        avgProcessingTime: '1.2s'
+      });
+      setLoading(false);
+    } catch (err: any) {
+      console.error('Error loading data:', err);
+      setError('Failed to load dashboard data.');
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div>
+        <h1 className="text-3xl font-bold mb-6">Welcome to DeepInshAura</h1>
+        <p className="text-gray-500">Loading dashboard...</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="text-3xl font-bold mb-6">Welcome to DeepInshAura</h1>
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        <StatCard title="Documents Processed" value="124" change="+12%" />
-        <StatCard title="Risk Flags" value="8" change="-3%" positive={false} />
-        <StatCard title="Average Processing Time" value="1.2s" change="-15%" positive={true} />
+        <StatCard 
+          title="Documents Processed" 
+          value={stats.totalDocs.toString()} 
+          change="+12%" 
+        />
+        <StatCard 
+          title="Risk Flags" 
+          value={stats.riskFlags.toString()} 
+          change="-3%" 
+          positive={false} 
+        />
+        <StatCard 
+          title="Average Processing Time" 
+          value={stats.avgProcessingTime} 
+          change="-15%" 
+          positive={true} 
+        />
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -126,13 +187,13 @@ function AlertIcon({ className }: { className: string }) {
 }
 
 // Sample data
-const recentDocs = [
+const sampleDocs = [
   { id: '1', title: 'Financial Report Q1 2025.pdf', date: 'Apr 10, 2025' },
   { id: '2', title: 'Legal Agreement XYZ Corp.docx', date: 'Apr 8, 2025' },
   { id: '3', title: 'Market Analysis 2025.pdf', date: 'Apr 5, 2025' },
 ];
 
-const recentRisks = [
+const sampleRisks = [
   { id: '1', title: 'PII Data Exposure', document: 'Customer Data 2025.xlsx', severity: 'High' },
   { id: '2', title: 'Missing Compliance Statement', document: 'Legal Agreement XYZ Corp.docx', severity: 'Medium' },
   { id: '3', title: 'Potential Copyright Issue', document: 'Marketing Material.pdf', severity: 'Low' },

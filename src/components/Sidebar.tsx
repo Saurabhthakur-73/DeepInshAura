@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 interface NavItem {
   title: string;
@@ -34,6 +35,11 @@ const navItems: NavItem[] = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <aside className="fixed inset-y-0 left-0 z-10 w-64 bg-gray-900 text-white">
@@ -48,7 +54,7 @@ export default function Sidebar() {
                 <Link 
                   href={item.href}
                   className={`flex items-center px-4 py-2 rounded-md hover:bg-gray-800 ${
-                    pathname === item.href ? "bg-gray-800 text-white" : "text-gray-400"
+                    mounted && pathname === item.href ? "bg-gray-800 text-white" : "text-gray-400"
                   }`}
                 >
                   {item.icon}

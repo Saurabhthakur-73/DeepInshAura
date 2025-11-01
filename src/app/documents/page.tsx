@@ -2,7 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { documentApi, Document } from '@/lib/api';
+import { db } from '@/lib/firebase';
+import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+
+interface Document {
+  id: string;
+  fileName: string;
+  riskLevel: string;
+  timestamp: any;
+  fileSize: number;
+  analysis?: any;
+}
 
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -12,39 +22,43 @@ export default function DocumentsPage() {
   const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
 
   useEffect(() => {
-    const fetchDocuments = async () => {
-      try {
-        setIsLoading(true);
-        const docs = await documentApi.getAllDocuments();
-        setDocuments(docs);
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching documents:', err);
-        setError('Failed to load documents. Please try again later.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchDocuments();
   }, []);
 
-  // Filter and sort documents based on search term and sort option
+  const fetchDocuments = async () => {
+    try {
+      setIsLoading(true);
+      const q = query(collection(db, 'documents'), orderBy('timestamp', 'desc'));
+      const snapshot = await getDocs(q);
+      
+      const docs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Document));
+      
+      setDocuments(docs);
+      setError(null);
+    } catch (err) {
+      console.error('Error fetching documents:', err);
+      setError('Failed to load documents. Please try again later.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Filter and sort documents
   const filteredDocuments = documents.filter(doc => 
-    doc.filename.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (doc.summary && doc.summary.toLowerCase().includes(searchTerm.toLowerCase()))
+    doc.fileName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (doc.analysis?.summary && doc.analysis.summary.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const sortedDocuments = [...filteredDocuments].sort((a, b) => {
     if (sortBy === 'date') {
-      return new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime();
+      return (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0);
     } else {
-      return a.filename.localeCompare(b.filename);
+      return a.fileName.localeCompare(b.fileName);
     }
   });
-
-  // Determine if a document has risks
-  const hasRisks = (risks: string) => risks !== 'No issues found' && risks.trim() !== '';
 
   return (
     <div>
@@ -99,7 +113,7 @@ export default function DocumentsPage() {
             <div className="text-red-500 mb-2">{error}</div>
             <button 
               className="text-blue-600 hover:underline"
-              onClick={() => window.location.reload()}
+              onClick={() => fetchDocuments()}
             >
               Retry
             </button>
@@ -111,8 +125,8 @@ export default function DocumentsPage() {
                 <tr>
                   <th scope="col" className="px-6 py-3">Document</th>
                   <th scope="col" className="px-6 py-3">Date</th>
-                  <th scope="col" className="px-6 py-3">Type</th>
-                  <th scope="col" className="px-6 py-3">Risks</th>
+                  <th scope="col" className="px-6 py-3">Size</th>
+                  <th scope="col" className="px-6 py-3">Risk Level</th>
                   <th scope="col" className="px-6 py-3">Actions</th>
                 </tr>
               </thead>
@@ -121,34 +135,32 @@ export default function DocumentsPage() {
                   sortedDocuments.map((doc) => (
                     <tr key={doc.id} className="bg-white border-b hover:bg-gray-50">
                       <td className="px-6 py-4 font-medium text-gray-900">
-                        <Link href={`/documents/${doc.id}`} className="hover:text-blue-600">
-                          {doc.filename}
+                        <div className="flex items-center">
+                          <svg className="h-5 w-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" />
+                          </svg>
+                          {doc.fileName}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        {doc.timestamp ? new Date(doc.timestamp.toDate()).toLocaleDateString() : 'N/A'}
+                      </td>
+                      <td className="px-6 py-4">
+                        {doc.fileSize ? `${(doc.fileSize / 1024).toFixed(2)} KB` : 'N/A'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          doc.riskLevel === 'HIGH' ? 'bg-red-100 text-red-800' :
+                          doc.riskLevel === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          {doc.riskLevel || 'LOW'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <Link href={`/documents/${doc.id}`} className="text-blue-600 hover:underline">
+                          View Details
                         </Link>
-                      </td>
-                      <td className="px-6 py-4">
-                        {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'N/A'}
-                      </td>
-                      <td className="px-6 py-4">
-                        {doc.metadata && doc.metadata.DocumentType ? doc.metadata.DocumentType : 'Unknown'}
-                      </td>
-                      <td className="px-6 py-4">
-                        {hasRisks(doc.risks) ? (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                            Risks Found
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                            No Issues
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <Link href={`/documents/${doc.id}`} className="text-blue-600 hover:underline mr-4">
-                          View
-                        </Link>
-                        <a href={doc.blob_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                          Download
-                        </a>
                       </td>
                     </tr>
                   ))
@@ -161,7 +173,7 @@ export default function DocumentsPage() {
                         <div>
                           <p className="mb-2">No documents found.</p>
                           <Link href="/upload" className="text-blue-600 hover:underline">
-                            Upload your first document
+                            Upload your first document →
                           </Link>
                         </div>
                       )}
