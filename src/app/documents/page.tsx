@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { db } from '@/lib/firebase';
-import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+import { db, auth } from '@/lib/firebase';
+import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { useRouter } from 'next/navigation';
 
 interface Document {
   id: string;
@@ -15,6 +17,8 @@ interface Document {
 }
 
 export default function DocumentsPage() {
+  const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,12 +32,28 @@ export default function DocumentsPage() {
   const [compareResult, setCompareResult] = useState<string>('');
   const [comparing, setComparing] = useState(false);
 
-  useEffect(() => { fetchDocuments(); }, []);
+  // ✅ Auth check + fetch
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (u) {
+        fetchDocuments(u.uid);
+      } else {
+        router.push('/');
+      }
+    });
+    return () => unsub();
+  }, []);
 
-  const fetchDocuments = async () => {
+  // ✅ Sirf is user ke documents fetch karo
+  const fetchDocuments = async (uid: string) => {
     try {
       setIsLoading(true);
-      const q = query(collection(db, 'documents'), orderBy('timestamp', 'desc'));
+      const q = query(
+        collection(db, 'documents'),
+        where('userId', '==', uid), // ✅ filter by user
+        orderBy('timestamp', 'desc')
+      );
       const snapshot = await getDocs(q);
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Document));
       setDocuments(docs);
@@ -56,16 +76,15 @@ export default function DocumentsPage() {
     return a.fileName.localeCompare(b.fileName);
   });
 
-  // ✅ Toggle doc selection for compare
+  // ✅ Compare logic
   const toggleSelectDoc = (docId: string) => {
     setSelectedDocs(prev => {
       if (prev.includes(docId)) return prev.filter(d => d !== docId);
-      if (prev.length >= 2) return prev; // max 2
+      if (prev.length >= 2) return prev;
       return [...prev, docId];
     });
   };
 
-  // ✅ Run AI comparison
   const handleCompare = async () => {
     if (selectedDocs.length !== 2) return;
     setComparing(true);
@@ -80,10 +99,9 @@ export default function DocumentsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [
-            {
-              role: 'user',
-              content: `Compare these two insurance policies and tell me:
+          messages: [{
+            role: 'user',
+            content: `Compare these two insurance policies and tell me:
 1. Which one is BETTER for the policyholder and why?
 2. Key differences in coverage
 3. Key differences in risks
@@ -97,8 +115,7 @@ Policy 2: ${doc2?.fileName}
 ${JSON.stringify(doc2?.analysis, null, 2)}
 
 Give a clear, structured comparison in English.`,
-            },
-          ],
+          }],
           documentContext: null,
         }),
       });
@@ -127,7 +144,6 @@ Give a clear, structured comparison in English.`,
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Documents</h1>
         <div className="flex gap-3">
-          {/* ✅ Compare Toggle Button */}
           <button
             onClick={() => compareMode ? resetCompare() : setCompareMode(true)}
             className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
@@ -144,7 +160,7 @@ Give a clear, structured comparison in English.`,
         </div>
       </div>
 
-      {/* ✅ Compare Banner */}
+      {/* Compare Banner */}
       {compareMode && (
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4 flex items-center justify-between">
           <div className="text-sm text-purple-700">
@@ -153,34 +169,26 @@ Give a clear, structured comparison in English.`,
             {selectedDocs.length === 2 && `✅ "${doc1?.fileName}" vs "${doc2?.fileName}"`}
           </div>
           {selectedDocs.length === 2 && (
-            <button
-              onClick={handleCompare}
-              className="px-4 py-2 bg-purple-600 text-white rounded-md text-sm font-medium hover:bg-purple-700"
-            >
+            <button onClick={handleCompare} className="px-4 py-2 bg-purple-600 text-white rounded-md text-sm font-medium hover:bg-purple-700">
               Compare Now →
             </button>
           )}
         </div>
       )}
 
-      {/* ✅ Compare Result Modal */}
+      {/* Compare Modal */}
       {showCompare && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
-            {/* Modal Header */}
             <div className="flex items-center justify-between p-5 border-b">
               <div>
                 <h2 className="text-lg font-bold text-gray-900">Policy Comparison</h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {doc1?.fileName} vs {doc2?.fileName}
-                </p>
+                <p className="text-sm text-gray-500 mt-0.5">{doc1?.fileName} vs {doc2?.fileName}</p>
               </div>
               <button onClick={resetCompare} className="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
             </div>
 
-            {/* Modal Body */}
             <div className="flex-1 overflow-y-auto p-5">
-              {/* Risk badges */}
               <div className="flex gap-4 mb-4">
                 {[doc1, doc2].map((d, i) => (
                   <div key={i} className="flex-1 bg-gray-50 rounded-lg p-3 text-sm">
@@ -200,13 +208,10 @@ Give a clear, structured comparison in English.`,
                   <p className="text-gray-500 text-sm">AI is analyzing both policies...</p>
                 </div>
               ) : (
-                <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                  {compareResult}
-                </div>
+                <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{compareResult}</div>
               )}
             </div>
 
-            {/* Modal Footer */}
             {!comparing && compareResult && (
               <div className="p-4 border-t flex justify-end">
                 <button onClick={resetCompare} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md text-sm hover:bg-gray-200">
@@ -257,7 +262,7 @@ Give a clear, structured comparison in English.`,
         ) : error ? (
           <div className="text-center py-10">
             <div className="text-red-500 mb-2">{error}</div>
-            <button className="text-blue-600 hover:underline" onClick={fetchDocuments}>Retry</button>
+            <button className="text-blue-600 hover:underline" onClick={() => user && fetchDocuments(user.uid)}>Retry</button>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -278,13 +283,10 @@ Give a clear, structured comparison in English.`,
                     const isSelected = selectedDocs.includes(doc.id);
                     const isDisabled = compareMode && selectedDocs.length === 2 && !isSelected;
                     return (
-                      <tr
-                        key={doc.id}
-                        className={`bg-white border-b transition-colors ${
-                          isSelected ? 'bg-purple-50 border-purple-200' :
-                          isDisabled ? 'opacity-40' : 'hover:bg-gray-50'
-                        }`}
-                      >
+                      <tr key={doc.id} className={`bg-white border-b transition-colors ${
+                        isSelected ? 'bg-purple-50 border-purple-200' :
+                        isDisabled ? 'opacity-40' : 'hover:bg-gray-50'
+                      }`}>
                         {compareMode && (
                           <td className="px-4 py-4">
                             <input

@@ -43,16 +43,19 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File;
+    const userId = formData.get("userId") as string | null; // ✅ userId receive karo
 
     if (!file)
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
 
-    console.log("📄 Processing:", file.name);
+    if (!userId)
+      return NextResponse.json({ error: "User not authenticated" }, { status: 401 });
+
+    console.log("📄 Processing:", file.name, "for user:", userId);
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // ✅ KEY FIX: pdf-parse/lib/pdf-parse.js use karo
     let extractedText = "";
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -193,18 +196,19 @@ ${trimmedText || "No text could be extracted from this document."}`;
       };
     }
 
-    // ✅ Save to Firestore
+    // ✅ Save to Firestore WITH userId
     const docRef = await addDoc(collection(db, "documents"), {
       fileName: file.name,
       fileSize: file.size,
       fileType: file.type,
       analysis,
       riskLevel: analysis.riskLevel,
+      userId, // ✅ user ka document
       timestamp: serverTimestamp(),
       uploadDate: new Date().toISOString(),
     });
 
-    console.log("🔥 Saved to Firestore:", docRef.id);
+    console.log("🔥 Saved to Firestore:", docRef.id, "userId:", userId);
 
     return NextResponse.json({
       success: true,
