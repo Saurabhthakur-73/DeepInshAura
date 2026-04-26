@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 
-// ✅ Initialize Gemini client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+// ✅ Groq client
+const groq = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY!,
+  baseURL: "https://api.groq.com/openai/v1",
+});
 
-// 🧠 Fallback heuristic to guess risk level
+// 🧠 Fallback heuristic
 function heuristicRiskFromText(text: string) {
   const lowered = text.toLowerCase();
   const keywords = [
@@ -15,16 +18,11 @@ function heuristicRiskFromText(text: string) {
     "cancel", "fraud", "no cover", "not liable", "limit", "sub-limit",
     "co-pay", "copay"
   ];
-
   let score = 0;
   for (const kw of keywords) {
-    const matches = (lowered.match(new RegExp(kw, "g")) || []).length;
-    score += matches;
+    score += (lowered.match(new RegExp(kw, "g")) || []).length;
   }
-
-  const lenFactor = Math.min(Math.floor(lowered.length / 5000), 5);
-  const adjusted = score + lenFactor;
-
+  const adjusted = score + Math.min(Math.floor(lowered.length / 5000), 5);
   if (adjusted >= 7) return "HIGH";
   if (adjusted >= 3) return "MEDIUM";
   return "LOW";
@@ -51,92 +49,147 @@ export async function POST(request: NextRequest) {
 
     console.log("📄 Processing:", file.name);
 
-    // 🧾 Convert PDF to base64 (for Gemini to read directly)
     const arrayBuffer = await file.arrayBuffer();
-    const base64Data = Buffer.from(arrayBuffer).toString("base64");
+    const buffer = Buffer.from(arrayBuffer);
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
+    // ✅ KEY FIX: pdf-parse/lib/pdf-parse.js use karo
+    let extractedText = "";
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const pdfParse = require("pdf-parse/lib/pdf-parse.js");
+      const pdfData = await pdfParse(buffer);
+      extractedText = pdfData.text || "";
+      console.log("✅ PDF text extracted, length:", extractedText.length);
+    } catch (pdfErr) {
+      console.warn("⚠️ PDF parse failed:", pdfErr);
+      extractedText = "";
+    }
 
-    // 🧠 Optimized, context-aware prompt
-    const prompt = `
-You are an AI compliance and insurance document risk analyzer.
+    const trimmedText = extractedText.slice(0, 12000);
 
-Analyze the following insurance document and return ONLY a valid JSON object (no markdown, no commentary).
+    const prompt = `You are an expert AI legal and insurance document risk analyzer with deep knowledge of insurance law, consumer rights, and policy compliance.
 
-SCORING LOGIC:
-- Compute a risk score (1–10) based on how risky/unfair/confusing clauses are:
-  - HIGH → 8–10 (binding policy with unclear exclusions, hidden limits, or vague legal terms)
-  - MEDIUM → 4–7 (some legal complexity but overall fair)
-  - LOW → 1–3 (clear, transparent, customer-friendly)
-- ⚠️ IMPORTANT CONTEXT:
-  If the document is **educational, informational, or government guidance**
-  (not an insurance contract), mark riskLevel as LOW even if it contains words
-  like “exclusion”, “waiting period”, or “claim” used for explanation.
-- Never output UNKNOWN.
+Analyze the following insurance document thoroughly and return ONLY a valid JSON object (no markdown, no commentary).
 
-Return JSON exactly like:
+RISK LEVEL SCORING (be strict and detailed):
+- HIGH (score 7-10): 
+  * Broad exclusion clauses that deny common claims
+  * Vague or ambiguous language that favors insurer
+  * Hidden sub-limits that drastically reduce coverage
+  * Unfair claim denial conditions
+  * Excessive waiting periods (>6 months)
+  * Unilateral policy cancellation rights for insurer
+  * Pre-existing condition exclusions that are overly broad
+  * Clauses that shift burden of proof heavily to policyholder
+
+- MEDIUM (score 4-6):
+  * Some exclusions but reasonable and clearly stated
+  * Moderate waiting periods (2-6 months)
+  * Standard claim documentation requirements
+  * Some legal complexity but generally fair
+  * Limited coverage for certain conditions
+
+- LOW (score 1-3):
+  * Clear, transparent language
+  * Fair exclusions with proper justification
+  * Reasonable claim process
+  * Strong consumer protections
+  * Educational or informational document (not a contract)
+
+ANALYSIS REQUIREMENTS:
+- Identify EVERY risky clause, hidden condition, or unfair term
+- Give at least 5-8 specific risks if document is HIGH/MEDIUM risk
+- Give at least 5-8 actionable recommendations
+- Quote specific clause types when possible
+- Be consumer-focused — flag anything that could hurt the policyholder
+
+Return JSON exactly like this:
 {
-  "summary": "Brief 2–3 line summary of the document",
+  "summary": "Detailed 3-4 line summary covering document type, main coverage, key concerns, and overall fairness assessment",
   "riskLevel": "HIGH" | "MEDIUM" | "LOW",
-  "risks": ["Short list of risky or confusing clauses"],
-  "recommendations": ["Practical improvements for fairness and clarity"],
+  "riskScore": <number 1-10>,
+  "risks": [
+    "Specific risk 1 with explanation of how it harms policyholder",
+    "Specific risk 2 with explanation",
+    "Specific risk 3 with explanation",
+    "Specific risk 4 with explanation",
+    "Specific risk 5 with explanation",
+    "Add more if found..."
+  ],
+  "recommendations": [
+    "Specific actionable recommendation 1",
+    "Specific actionable recommendation 2", 
+    "Specific actionable recommendation 3",
+    "Specific actionable recommendation 4",
+    "Specific actionable recommendation 5",
+    "Add more if needed..."
+  ],
+  "keyFindings": [
+    "Most important finding 1",
+    "Most important finding 2",
+    "Most important finding 3"
+  ],
   "metadata": {
-    "type": "Insurance Policy Document",
-    "company": "If found, company name else 'Unknown'",
-    "date": "DD/MM/YYYY",
-    "parties": "Insurer and Policyholder"
+    "type": "Type of insurance document",
+    "company": "Company name if found, else 'Unknown'",
+    "date": "DD/MM/YYYY if found, else 'Unknown'",
+    "parties": "Insurer and Policyholder names if found"
   }
 }
 
 Rules:
-- Output ONLY JSON.
-- Use context to judge if document is a policy or just an informational guide.
-- Be concise and objective.
-`;
+- Output ONLY valid JSON, no extra text.
+- Be thorough — a shallow analysis helps no one.
+- Always think from the POLICYHOLDER's perspective.
+- If document text is too short or unclear, still give best possible analysis.
+- Never return empty arrays for risks or recommendations.
 
-    console.log("🤖 Sending to Gemini with inlineData...");
+DOCUMENT TEXT:
+${trimmedText || "No text could be extracted from this document."}`;
 
-    // ✅ Gemini ko file aur prompt dono bhej rahe hain
-    const result = await model.generateContent([
-      { text: prompt },
-      { inlineData: { mimeType: file.type, data: base64Data } },
-    ]);
+    console.log("🤖 Sending to Groq...");
 
-    const rawResponse = await result.response.text();
-    console.log("✅ Gemini raw response received.");
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 1000,
+    });
+
+    const rawResponse = completion.choices[0]?.message?.content || "";
+    console.log("✅ Groq response received.");
 
     const candidate = extractJsonString(rawResponse);
     let analysis: any;
 
     try {
       analysis = JSON.parse(candidate);
-      const rl =
-        typeof analysis?.riskLevel === "string"
-          ? analysis.riskLevel.toUpperCase()
-          : null;
+      const rl = typeof analysis?.riskLevel === "string"
+        ? analysis.riskLevel.toUpperCase()
+        : null;
 
       if (!["HIGH", "MEDIUM", "LOW"].includes(rl)) {
-        console.warn("⚠️ Invalid riskLevel, recalculating via heuristic...");
-        analysis.riskLevel = "LOW"; // since Gemini read PDF directly
+        console.warn("⚠️ Invalid riskLevel, using heuristic...");
+        analysis.riskLevel = heuristicRiskFromText(trimmedText);
       } else {
         analysis.riskLevel = rl;
       }
     } catch (parseErr) {
       console.warn("⚠️ JSON parse failed, fallback used.", parseErr);
       analysis = {
-        summary: "AI could not fully parse, fallback summary used.",
-        riskLevel: "LOW",
+        summary: "AI could not fully parse the document.",
+        riskLevel: heuristicRiskFromText(trimmedText),
         risks: ["Document may be non-policy or purely educational."],
         recommendations: [
           "Ensure PDF contains clearly structured text.",
-          "Retry with smaller section for clarity."
+          "Retry with smaller section for clarity.",
         ],
         metadata: {
           type: "Insurance Policy Document",
           company: "Unknown",
           date: new Date().toLocaleDateString(),
-          parties: "Insurer and Policyholder"
-        }
+          parties: "Insurer and Policyholder",
+        },
       };
     }
 
@@ -160,6 +213,7 @@ Rules:
       riskLevel: analysis.riskLevel,
       analysis,
     });
+
   } catch (error: any) {
     console.error("❌ AI Analysis Error:", error);
     return NextResponse.json(
