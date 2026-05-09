@@ -18,12 +18,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </head>
       <body className={inter.className}>
         <div className="flex min-h-screen bg-gray-100">
           <Sidebar />
-          <div className="flex-1 ml-64">
+          <div className="flex-1 md:ml-64 ml-0">
             <Header />
-            <main className="p-6">{children}</main>
+            <main className="p-3 md:p-6">{children}</main>
           </div>
         </div>
       </body>
